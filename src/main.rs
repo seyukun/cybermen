@@ -69,7 +69,6 @@ async fn main() {
     let siface = iface.clone();
 
     // Handling for receive packet
-
     let _ = thread::spawn(move || loop {
         let mut buf = [0; 1518];
         let runtime = Runtime::new().expect("Unable to create a runtime");
