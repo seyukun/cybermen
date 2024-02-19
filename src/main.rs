@@ -57,7 +57,6 @@ async fn main() {
     let siface = iface.clone();
 
     // Handling for receive packet
-    siface.set_non_blocking().unwrap();
     let _ = tokio::spawn(async move {
         loop {
             let mut buf = [0; 1518];
