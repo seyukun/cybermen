@@ -1,6 +1,3 @@
-//! Integration of TUN/TAP into tokio.
-//!
-//! See the [`Async`](struct.Async.html) structure.
 extern crate futures;
 extern crate libc;
 extern crate mio;
@@ -9,9 +6,9 @@ extern crate tokio_core;
 use std::io::{Error, ErrorKind, Read, Result, Write};
 use std::os::unix::io::AsRawFd;
 
-use self::futures::{Async as FAsync, AsyncSink, Sink, StartSend, Stream, Poll as FPoll};
-use self::mio::{Evented, Poll as MPoll, PollOpt, Ready, Token};
+use self::futures::{Async as FAsync, AsyncSink, Poll as FPoll, Sink, StartSend, Stream};
 use self::mio::unix::EventedFd;
+use self::mio::{Evented, Poll as MPoll, PollOpt, Ready, Token};
 use self::tokio_core::reactor::{Handle, PollEvented};
 
 use super::Iface;
@@ -47,45 +44,12 @@ impl Write for MioWrapper {
     }
 }
 
-/// A wrapper around [`Iface`](../struct.Iface.html) for use in connection with tokio.
-///
-/// This turns the synchronous `Iface` into an asynchronous `Sink + Stream` of packets.
 pub struct Async {
     mio: PollEvented<MioWrapper>,
     recv_bufsize: usize,
 }
 
 impl Async {
-    /// Consumes an `Iface` and wraps it in a new `Async`.
-    ///
-    /// # Parameters
-    ///
-    /// * `iface`: The created interface to wrap. It gets consumed.
-    /// * `handle`: The handle to tokio's `Core` to run on.
-    ///
-    /// # Errors
-    ///
-    /// This fails with an error in case of low-level OS errors (they shouldn't usually happen).
-    ///
-    /// # Examples
-    ///
-    /// ```rust,no_run
-    /// # extern crate futures;
-    /// # extern crate tokio_core;
-    /// # extern crate tun_tap;
-    /// # use futures::Stream;
-    /// # use tun_tap::*;
-    /// # use tun_tap::async::*;
-    /// # use tokio_core::reactor::Core;
-    /// # fn main() {
-    /// let iface = Iface::new("mytun%d", Mode::Tun).unwrap();
-    /// let name = iface.name().to_owned();
-    /// // Bring the interface up by `ip addr add IP dev $name; ip link set up dev $name`
-    /// let core = Core::new().unwrap();
-    /// let async = Async::new(iface, &core.handle()).unwrap();
-    /// let (sink, stream) = async.split();
-    /// # }
-    /// ```
     pub fn new(iface: Iface, handle: &Handle) -> Result<Self> {
         iface.set_non_blocking()?;
         Ok(Async {
@@ -93,13 +57,7 @@ impl Async {
             recv_bufsize: 1542,
         })
     }
-    /// Sets the receive buffer size.
-    ///
-    /// When receiving a packet, a buffer of this size is allocated and the packet read into it.
-    /// This configures the size of the buffer.
-    ///
-    /// This needs to be called when the interface's MTU is changed from the default 1500. The
-    /// default should be enough otherwise.
+
     pub fn set_recv_bufsize(&mut self, bufsize: usize) {
         self.recv_bufsize = bufsize;
     }
@@ -115,7 +73,7 @@ impl Stream for Async {
             Ok(size) => {
                 buffer.resize(size, 0);
                 Ok(FAsync::Ready(Some(buffer)))
-            },
+            }
             Err(ref e) if e.kind() == ErrorKind::WouldBlock => Ok(FAsync::NotReady),
             Err(e) => Err(e),
         }
