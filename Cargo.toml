@@ -2,9 +2,12 @@
 name = "cybermen"
 version = "0.1.0"
 edition = "2021"
+authors = ["yus-sato <yus-sato@kalyte.ro>"]
 
 [dependencies]
+clap = "4.5.1"
 futures = "0.1"
 tokio = { version = "1.35.1", features = ["full"] }
 tokio-core = { version = "0.1.18" }
 tuntap = { path = "src/modules/tuntap" }
+cmd = { path = "src/modules/cmd" }
