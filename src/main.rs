@@ -1,100 +1,91 @@
-use std::net::UdpSocket;
+use std::io::Result;
+use std::net::SocketAddr;
 use std::process::Command;
 use std::str;
-use std::sync::Arc;
-use std::{thread, time};
+
+use futures::{Future, Stream};
+use tokio_core::net::UdpCodec;
+use tokio_core::reactor::Core;
+
+use tuntap::asynclib::Async;
 use tuntap::{Iface, Mode};
 
 fn cmd(cmd: &str, args: &[&str]) {
-    let ecode = Command::new(cmd)
-        .args(args)
-        .spawn()
-        .unwrap()
-        .wait()
-        .unwrap();
+    let mut child = Command::new(cmd).args(args).spawn().unwrap();
+    let ecode = child.wait().unwrap();
     assert!(ecode.success(), "Failed to execte {}", cmd);
 }
 
-#[tokio::main(flavor = "multi_thread")]
-async fn main() {
-    // Interface name
-    let iface: Arc<Iface>;
-    let if_addr: &str;
-    let if_name: &str = "cm0";
-    let loc_addr: &str = "0.0.0.0:0";
-    let rem_addr: &str = "163.43.185.240:3000";
-    let socket: Arc<UdpSocket> = Arc::new(UdpSocket::bind(loc_addr).unwrap());
-    let mut buf_if_addr = [0; 18];
+struct VecCodec(SocketAddr);
 
-    // Connect
-    socket
-        .connect(rem_addr)
-        .expect("[ FAILED ] Connection unestablished");
-    println!("[ OK ] Connection established: {}", rem_addr);
-
-    // Send request
-    socket.send(&[0; 1]).expect("[ FAILED ] SYN cannot send");
-    println!("[ OK ] SYN");
-
-    // Get interface address
-    match socket.recv(&mut buf_if_addr) {
-        Ok(len) => {
-            if_addr =
-                str::from_utf8(&buf_if_addr[..len]).expect("[ FAILED ] ACK packet is invalid");
-        }
-        Err(e) => panic!("[ FAILED ] ACK dose not recived: {}", e),
+impl UdpCodec for VecCodec {
+    type In = Vec<u8>;
+    type Out = Vec<u8>;
+    fn decode(&mut self, _src: &SocketAddr, buf: &[u8]) -> Result<Self::In> {
+        Ok(buf.to_owned())
     }
-    println!("[ OK ] ACK recived: {}", if_addr);
+    fn encode(&mut self, msg: Self::Out, buf: &mut Vec<u8>) -> SocketAddr {
+        buf.extend(&msg);
+        self.0
+    }
+}
 
-    // Create a „local“ (kernel) endpoint.
-    iface = Arc::new(Iface::new(if_name, Mode::Tun).unwrap());
-    cmd("ip", &["addr", "add", "dev", iface.name(), if_addr]);
+fn main() {
+    // Read Local & Remote IP from args
+    // let loc_address = "0.0.0.0:0"
+    //     .parse()
+    //     .unwrap_or_else(|e| panic!("[ FAILED ] LOCAL ADDRESS is broken: {e}"));
+    // let rem_address = env::args()
+    //     .nth(2)
+    //     .unwrap()
+    //     .parse()
+    //     .unwrap_or_else(|e| panic!("[ FAILED ] REMOTE ADDRESS is broken: {e}"));
+    let loc_address: SocketAddr = "0.0.0.0:0".parse().unwrap();
+    let rem_address: SocketAddr = "163.43.185.240:3000".parse().unwrap();
+    let loc_if_address: &str;
+    let if_name = "cm0";
+    let mut ip_buf = [0; 18];
+
+    // Create socket
+    let std_socket = std::net::UdpSocket::bind(&loc_address).unwrap();
+
+    // Create interface
+    let iface = Iface::new(&if_name, Mode::Tap)
+        .unwrap_or_else(|err| panic!("[ FAILED ] Cannot create interface: {}", err));
+
+    // Connection
+    match std_socket.connect(&rem_address) {
+        Ok(_) => println!(
+            "[ OK ] Connection established with {}",
+            rem_address.to_string()
+        ),
+        Err(e) => panic!("[ FAILED ] Connection unestablished: {}", e),
+    };
+    match std_socket.send(&[0; 1]) {
+        Ok(_) => println!("[ OK ] SYN"),
+        Err(e) => panic!("[ FAILED ] SYN Error: {}", e),
+    };
+    match std_socket.recv(&mut ip_buf) {
+        Ok(size) => match str::from_utf8(&mut ip_buf[..size]) {
+            Ok(s) => {
+                loc_if_address = s;
+                println!("[ OK ] ACK");
+            }
+            Err(e) => panic!("[ FAILED ] ACK packet is broken: {e}"),
+        },
+        Err(e) => panic!("[ FAILED ] ACK Error: {}", e),
+    };
+
+    // Configure the „local“ (kernel) endpoint.
+    cmd("ip", &["addr", "add", "dev", iface.name(), &loc_if_address]);
     cmd("ip", &["link", "set", "up", "dev", iface.name()]);
 
-    let rsocket = socket.clone();
-    let ssocket = socket.clone();
-    let riface = iface.clone();
-    let siface = iface.clone();
-
-    // Handling for receive packet
-    let _ = tokio::spawn(async move {
-        loop {
-            let mut buf = [0; 1518];
-            match rsocket.recv(&mut buf) {
-                Ok(len) => {
-                    if len > 0 {
-                        siface.send(&buf[..len]).unwrap();
-                    }
-                }
-                Err(e) => {
-                    println!("[ FAILED R ] Unable to block socket: {}", e);
-                }
-            };
-        }
-    });
-
-    // Handling for send packet
-    let th_send = tokio::spawn(async move {
-        loop {
-            let mut buf = [0; 1518];
-            match riface.recv(&mut buf) {
-                Ok(len) => {
-                    if len > 0 {
-                        ssocket
-                            .send(&buf[..len])
-                            .expect("[ FAILED S ] Unable to block socket");
-                    }
-                }
-                Err(_) => continue,
-            };
-        }
-    });
-
-    // Keep alive until the thread is terminated by an error
-    loop {
-        if th_send.is_finished() {
-            break;
-        }
-        thread::sleep(time::Duration::from_millis(100));
-    }
+    // Packet handling
+    let mut core = Core::new().unwrap();
+    let core_socket = tokio_core::net::UdpSocket::from_socket(std_socket, &core.handle()).unwrap();
+    let (socket_sink, socket_stream) = core_socket.framed(VecCodec(rem_address)).split();
+    let (iface_sink, iface_stream) = Async::new(iface, &core.handle()).unwrap().split();
+    let sender = iface_stream.forward(socket_sink);
+    let receiver = socket_stream.forward(iface_sink);
+    core.run(sender.join(receiver)).unwrap();
 }
