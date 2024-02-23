@@ -36,17 +36,18 @@ impl UdpCodec for VecCodec {
 
 fn main() {
     // Read Local & Remote IP from args
-    let loc_address = env::args()
-        .nth(2)
-        .unwrap()
-        .parse()
-        .unwrap_or_else(|e| panic!("[ FAILED ] LOCAL ADDRESS is broken: {e}"));
-    let rem_address = env::args()
-        .nth(3)
-        .unwrap()
-        .parse()
-        .unwrap_or_else(|e| panic!("[ FAILED ] REMOTE ADDRESS is broken: {e}"));
+    // let loc_address = "0.0.0.0:0"
+    //     .parse()
+    //     .unwrap_or_else(|e| panic!("[ FAILED ] LOCAL ADDRESS is broken: {e}"));
+    // let rem_address = env::args()
+    //     .nth(2)
+    //     .unwrap()
+    //     .parse()
+    //     .unwrap_or_else(|e| panic!("[ FAILED ] REMOTE ADDRESS is broken: {e}"));
+    let loc_address = "0.0.0.0:0".parse().unwrap();
+    let rem_address = "163.43.185.240:3000".parse().unwrap();
     let loc_if_address: &str;
+    let if_name = "cm0";
     let mut ip_buf = [0; 18];
 
     // Create socket
@@ -54,13 +55,12 @@ fn main() {
     let socket = UdpSocket::bind(&loc_address, &core.handle()).unwrap();
 
     // Create interface
-    let name = &env::args().nth(4).unwrap();
-    let iface = Iface::new(&name, Mode::Tap)
+    let iface = Iface::new(&if_name, Mode::Tap)
         .unwrap_or_else(|err| panic!("[ FAILED ] Cannot create interface: {}", err));
 
     // Connection
     match socket.connect(&rem_address) {
-        Ok(_) => println!("[ OK ] Connection established with {}", rem_address),
+        Ok(_) => println!("[ OK ] Connection established with {}", rem_address.to_string()),
         Err(e) => panic!("[ FAILED ] Connection unestablished: {}", e),
     };
     match socket.send(&[0; 1]) {
