@@ -1,8 +1,7 @@
 use std::io::Result;
 use std::net::SocketAddr;
 use std::process::Command;
-use std::str;
-use std::{env, process};
+use std::{env, str};
 
 use futures::{Future, Stream};
 use tokio_core::net::{UdpCodec, UdpSocket};
