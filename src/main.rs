@@ -1,10 +1,10 @@
 use std::io::Result;
 use std::net::SocketAddr;
 use std::process::Command;
-use std::{env, str};
+use std::str;
 
 use futures::{Future, Stream};
-use tokio_core::net::{UdpCodec, UdpSocket};
+use tokio_core::net::UdpCodec;
 use tokio_core::reactor::Core;
 
 use tuntap::asynclib::Async;
@@ -40,33 +40,32 @@ fn main() {
     //     .unwrap()
     //     .parse()
     //     .unwrap_or_else(|e| panic!("[ FAILED ] REMOTE ADDRESS is broken: {e}"));
-    let loc_address = "0.0.0.0:0".parse().unwrap();
-    let rem_address = "163.43.185.240:3000".parse().unwrap();
+    let loc_address: SocketAddr = "0.0.0.0:0".parse().unwrap();
+    let rem_address: SocketAddr = "163.43.185.240:3000".parse().unwrap();
     let loc_if_address: &str;
     let if_name = "cm0";
     let mut ip_buf = [0; 18];
 
     // Create socket
-    let mut core = Core::new().unwrap();
-    let socket = UdpSocket::bind(&loc_address, &core.handle()).unwrap();
+    let std_socket = std::net::UdpSocket::bind(&loc_address).unwrap();
 
     // Create interface
     let iface = Iface::new(&if_name, Mode::Tap)
         .unwrap_or_else(|err| panic!("[ FAILED ] Cannot create interface: {}", err));
 
     // Connection
-    match socket.connect(&rem_address) {
+    match std_socket.connect(&rem_address) {
         Ok(_) => println!(
             "[ OK ] Connection established with {}",
             rem_address.to_string()
         ),
         Err(e) => panic!("[ FAILED ] Connection unestablished: {}", e),
     };
-    match socket.send(&[0; 1]) {
+    match std_socket.send(&[0; 1]) {
         Ok(_) => println!("[ OK ] SYN"),
         Err(e) => panic!("[ FAILED ] SYN Error: {}", e),
     };
-    match socket.recv(&mut ip_buf) {
+    match std_socket.recv(&mut ip_buf) {
         Ok(size) => match str::from_utf8(&mut ip_buf[..size]) {
             Ok(s) => {
                 loc_if_address = s;
@@ -82,7 +81,9 @@ fn main() {
     cmd("ip", &["link", "set", "up", "dev", iface.name()]);
 
     // Packet handling
-    let (socket_sink, socket_stream) = socket.framed(VecCodec(rem_address)).split();
+    let mut core = Core::new().unwrap();
+    let core_socket = tokio_core::net::UdpSocket::from_socket(std_socket, &core.handle()).unwrap();
+    let (socket_sink, socket_stream) = core_socket.framed(VecCodec(rem_address)).split();
     let (iface_sink, iface_stream) = Async::new(iface, &core.handle()).unwrap().split();
     let sender = iface_stream.forward(socket_sink);
     let receiver = socket_stream.forward(iface_sink);
